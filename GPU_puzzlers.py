@@ -471,6 +471,20 @@ def conv_test(cuda):
         local_i = cuda.threadIdx.x
 
         # FILL ME IN (roughly 17 lines)
+        shared_a = cuda.shared.array(TPB, numba.float32) # TPB for one thread in each block (as this is most efficient possible)
+        shared_b = cuda.shared.array(MAX_CONV, numba.float32) # MAX_CONV to represent max possible length for the convoluting vector (b)
+        if local_i < a_size:
+            shared_a[local_i] = a[local_i]
+        if local_i < b_size:
+            shared_b[local_i] = b[local_i]
+        cuda.syncthreads()
+        acc = 0
+        # Manually loop through convolution for each thread to get output
+        for j in range(b_size):
+            if i + j < a_size:
+                acc += shared_a[i + j] * shared_b[j]
+        if i < a_size:
+            out[i] = acc
 
     return call
 
