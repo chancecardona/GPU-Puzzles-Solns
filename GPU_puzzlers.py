@@ -424,6 +424,14 @@ def dot_test(cuda):
         i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
         local_i = cuda.threadIdx.x
         # FILL ME IN (roughly 9 lines)
+        if i < size:
+            shared[local_i] = a[i] * b[i]
+        cuda.syncthreads()
+        if local_i == 0:
+            dot_sum = 0
+            for j in range(size):
+                dot_sum += shared[j]
+            out[0] = dot_sum
     return call
 
 
@@ -471,18 +479,25 @@ def conv_test(cuda):
         local_i = cuda.threadIdx.x
 
         # FILL ME IN (roughly 17 lines)
-        shared_a = cuda.shared.array(TPB, numba.float32) # TPB for one thread in each block (as this is most efficient possible)
+        shared_a = cuda.shared.array(TPB_MAX_CONV, numba.float32) # TPB for one thread in each block (as this is most efficient possible)
         shared_b = cuda.shared.array(MAX_CONV, numba.float32) # MAX_CONV to represent max possible length for the convoluting vector (b)
-        if local_i < a_size:
-            shared_a[local_i] = a[local_i]
+        if i < a_size:
+            shared_a[local_i] = a[i] # Use i as we need to get full a values in. (distributed across all the blocks).
         if local_i < b_size:
             shared_b[local_i] = b[local_i]
+        else: # Only load extra a values (on boundary) when we aren't loading b into shared memory
+            local_i2 = local_i - b_size; # Calculate these to offset the fact we only do this branch when not loading b vals.
+            i2 = i - b_size;
+            # TPB is the index of the boundary. Need to do b_size times as we need the full convolution length to calc the output.
+            if i2 + TPB < a_size and local_i2 < b_size: # Use i and not local_i as we need to go over the normal thread_len for this specific purpose.
+              shared_a[TPB + local_i2] = a[i2 + TPB]
         cuda.syncthreads()
         acc = 0
         # Manually loop through convolution for each thread to get output
         for j in range(b_size):
             if i + j < a_size:
-                acc += shared_a[i + j] * shared_b[j]
+                # shared_a only goes up to TPB, need to be careful of local vs global i.
+                acc += shared_a[local_i + j] * shared_b[j]
         if i < a_size:
             out[i] = acc
 
@@ -575,7 +590,6 @@ def sum_test(cuda):
         if local_i % 8 == 0 and local_i < TPB:
             cache[local_i] = cache[local_i] + cache[local_i + 4]
         cuda.syncthreads()
-        for k in range(local_i)
         if local_i == 0:
             # we can use our blocks to parallelize inputting "a".
             if local_i == 0:
@@ -714,16 +728,22 @@ def mm_oneblock_test(cuda):
         local_i = cuda.threadIdx.x
         local_j = cuda.threadIdx.y
         # FILL ME IN (roughly 14 lines)
-        if i < size and j < size:
-            # Copy in blocks
-            a_shared[local_i, local_j] = a[i, j]
-            b_shared[local_i, local_j] = b[i, j]
+        # Need to consider case where input arr (size) is larger than threads (TPB)
+        acc = 0
+        for k in range(0, size, TPB):
+            # Copy in blocks (we do it in here so we reset the shared memory when)
+            # we go past the TPB (k keeps track of that in the whole matrix)
+            if i < size and k + local_j < size:
+                a_shared[local_i, local_j] = a[i, k + local_j]
+            if j < size and k + local_i < size:
+                b_shared[local_i, local_j] = b[k + local_i, j]
             cuda.syncthreads()
             # Matrix Multiply
-            acc = 0
-            for k in range(size):
-                acc += a_shared[local_i, k] * b_shared[k, local_j]
-            # Copy to out
+            # Use TPB as this is only over shared memory (which we say is fixed here)
+            for local_k in range(min(TPB, size - k)):
+                acc += a_shared[local_i, local_k] * b_shared[local_k, local_j]
+        # Copy to out
+        if i < size and j < size:
             out[i, j] = acc
 
     return call
