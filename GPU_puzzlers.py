@@ -562,6 +562,24 @@ def sum_test(cuda):
         i = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
         local_i = cuda.threadIdx.x
         # FILL ME IN (roughly 12 lines)
+        # Copy data in and sync
+        if i < size:
+          cache[local_i] = a[i]
+        cuda.syncthreads()
+        if local_i % 2 == 0 and local_i < TPB:
+            cache[local_i] = cache[local_i] + cache[local_i + 1]
+        cuda.syncthreads()
+        if local_i % 4 == 0 and local_i < TPB:
+            cache[local_i] = cache[local_i] + cache[local_i + 2]
+        cuda.syncthreads()
+        if local_i % 8 == 0 and local_i < TPB:
+            cache[local_i] = cache[local_i] + cache[local_i + 4]
+        cuda.syncthreads()
+        for k in range(local_i)
+        if local_i == 0:
+            # we can use our blocks to parallelize inputting "a".
+            if local_i == 0:
+                out[cuda.blockIdx.x] = cache[local_i]
 
     return call
 
@@ -629,6 +647,20 @@ def axis_sum_test(cuda):
         local_i = cuda.threadIdx.x
         batch = cuda.blockIdx.y
         # FILL ME IN (roughly 12 lines)
+        if i < size:
+            # Copy and sync
+            cache[local_i] = a[batch, i] # Cache only handles 1 of the batch dimensions
+            cuda.syncthreads()
+            # Sum over each col
+            for k in range(3):
+                p = 2**k
+                if local_i % (p * 2) == 0 and i + p < size: # check on size to not read uninitalized vals
+                    cache[local_i] = cache[local_i] + cache[local_i + p]
+                    cuda.syncthreads()
+  
+        # Each block corresponds to a different output position
+        if local_i == 0:
+            out[batch, 0] = cache[local_i]
 
     return call
 
@@ -682,6 +714,17 @@ def mm_oneblock_test(cuda):
         local_i = cuda.threadIdx.x
         local_j = cuda.threadIdx.y
         # FILL ME IN (roughly 14 lines)
+        if i < size and j < size:
+            # Copy in blocks
+            a_shared[local_i, local_j] = a[i, j]
+            b_shared[local_i, local_j] = b[i, j]
+            cuda.syncthreads()
+            # Matrix Multiply
+            acc = 0
+            for k in range(size):
+                acc += a_shared[local_i, k] * b_shared[k, local_j]
+            # Copy to out
+            out[i, j] = acc
 
     return call
 
